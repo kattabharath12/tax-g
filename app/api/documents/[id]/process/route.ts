@@ -148,114 +148,61 @@ export async function POST(
     
     if (isPDF) {
       console.log("Processing PDF document with text extraction...")
+      console.log(`PDF file size: ${uint8Array.length} bytes`)
       
-      // For PDFs, try to extract text first, then send to OpenAI
-      let pdfText = ""
-      try {
-        // Try to extract text from PDF using a different approach
-        const fs = require('fs').promises
-        const tempPath = `/tmp/temp_${Date.now()}.pdf`
-        await fs.writeFile(tempPath, uint8Array)
-        
-        // Log file info for debugging
-        console.log(`PDF file size: ${uint8Array.length} bytes`)
-        console.log(`PDF saved to: ${tempPath}`)
-        
-        // For now, send the raw binary data to OpenAI with clearer instructions
-        const base64String = Buffer.from(uint8Array).toString('base64')
-        console.log(`Base64 string length: ${base64String.length}`)
-        
-        const response = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
-          messages: [
+      const base64String = Buffer.from(uint8Array).toString('base64')
+      console.log(`Base64 string length: ${base64String.length}`)
+      
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a tax document processing assistant. You will receive a PDF document and must extract the EXACT values you see in the document. 
+
+            CRITICAL INSTRUCTIONS:
+            - Extract ONLY the actual data you can read from the document
+            - Do NOT make up or hallucinate any values
+            - If you cannot clearly read a value, return null for that field
+            - Look for real employer names, real employee names, real SSNs, real dollar amounts
+            - Return data in this exact JSON format:
             {
-              role: "system",
-              content: `You are a tax document processing assistant. You will receive a PDF document and must extract the EXACT values you see in the document. 
+              "documentType": "string",
+              "taxYear": "number or null",
+              "employerName": "exact employer name from document or null",
+              "employeeInfo": {
+                "name": "exact employee name from document or null",
+                "ssn": "exact SSN from document or null",
+                "address": "exact address from document or null"
+              },
+              "taxAmounts": {
+                "federalWithheld": "exact dollar amount or null",
+                "stateWithheld": "exact dollar amount or null",
+                "totalIncome": "exact dollar amount or null",
+                "socialSecurityWages": "exact dollar amount or null",
+                "medicareWages": "exact dollar amount or null"
+              },
+              "confidence": "number between 0 and 1",
+              "debugInfo": "describe what you actually see in the document"
+            }`
+          },
+          {
+            role: "user",
+            content: `Extract tax information from this PDF. DO NOT use placeholder data like "John Doe" or "ABC Corporation". Extract only what you can actually read from the document.
 
-              CRITICAL INSTRUCTIONS:
-              - Extract ONLY the actual data you can read from the document
-              - Do NOT make up or hallucinate any values
-              - If you cannot clearly read a value, return null for that field
-              - Look for real employer names, real employee names, real SSNs, real dollar amounts
-              - Return data in this exact JSON format:
-              {
-                "documentType": "string",
-                "taxYear": "number or null",
-                "employerName": "exact employer name from document or null",
-                "employeeInfo": {
-                  "name": "exact employee name from document or null",
-                  "ssn": "exact SSN from document or null",
-                  "address": "exact address from document or null"
-                },
-                "taxAmounts": {
-                  "federalWithheld": "exact dollar amount or null",
-                  "stateWithheld": "exact dollar amount or null",
-                  "totalIncome": "exact dollar amount or null",
-                  "socialSecurityWages": "exact dollar amount or null",
-                  "medicareWages": "exact dollar amount or null"
-                },
-                "confidence": "number between 0 and 1",
-                "debugInfo": "describe what you actually see in the document"
-              }`
-            },
-            {
-              role: "user",
-              content: `Extract tax information from this PDF. DO NOT use placeholder data like "John Doe" or "ABC Corporation". Extract only what you can actually read from the document.
-
-              PDF Document: data:application/pdf;base64,${base64String.substring(0, 30000)}`
-            }
-          ],
-          max_tokens: 1500,
-          temperature: 0.0
-        })
-
-        const content = response.choices[0]?.message?.content
-        if (!content) {
-          throw new Error("No response from OpenAI")
-        }
-
-        console.log("Raw OpenAI response:", content)
-
-        try {
-          // Clean the response - remove markdown code blocks if present
-          let cleanContent = content.trim()
-          if (cleanContent.startsWith('```json')) {
-            cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '')
-          } else if (cleanContent.startsWith('```')) {
-            cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '')
+            PDF Document: data:application/pdf;base64,${base64String.substring(0, 30000)}`
           }
-          
-          extractedData = JSON.parse(cleanContent)
-        } catch (parseError) {
-          console.error("Failed to parse OpenAI response as JSON:", content)
-          // Fallback: create a simple structure that matches what we store
-          extractedData = {
-            documentType: "Unknown PDF",
-            content: content || "No content extracted",
-            confidence: 0.3,
-            rawText: content
-          }
-        }
-        
-        // Clean up temp file
-        try {
-          await fs.unlink(tempPath)
-        } catch (cleanupError) {
-          console.log("Could not clean up temp file:", cleanupError.message)
-        }
-        
-      } catch (pdfError) {
-        console.error("PDF processing error:", pdfError)
-        // Fallback to simple extraction
-        extractedData = {
-          documentType: "PDF Processing Failed",
-          content: "Could not process PDF",
-          confidence: 0.1,
-          error: pdfError.message
-        }
+        ],
+        max_tokens: 1500,
+        temperature: 0.0
+      })
+
+      const content = response.choices[0]?.message?.content
+      if (!content) {
+        throw new Error("No response from OpenAI")
       }
-      
-    } else {
+
+      console.log("Raw OpenAI response:", content)
 
       try {
         // Clean the response - remove markdown code blocks if present
@@ -326,8 +273,8 @@ export async function POST(
             ]
           }
         ],
-        max_tokens: 1000,
-        temperature: 0.1
+        max_tokens: 1500,
+        temperature: 0.0
       })
 
       const content = response.choices[0]?.message?.content
