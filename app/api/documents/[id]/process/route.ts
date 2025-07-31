@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { prisma } from "@/lib/db"
-import { DocumentAIService, createDocumentAIConfig, type ExtractedTaxData } from "@/lib/document-ai-service"
+import { DocumentAIService, createDocumentAIConfig } from "@/lib/document-ai-service"
 import OpenAI from 'openai'
 import { NextAuthOptions } from "next-auth"
 import CredentialsProvider from "next-auth/providers/credentials"
@@ -134,7 +134,7 @@ export async function POST(
     const isPDF = document.fileName?.toLowerCase().endsWith('.pdf') || 
                   document.filePath.toLowerCase().includes('.pdf')
     
-    let extractedData: ExtractedTaxData
+    let extractedData: any // Use flexible type for now
     
     if (isPDF) {
       console.log("Processing PDF document with text extraction...")
@@ -186,24 +186,12 @@ export async function POST(
         extractedData = JSON.parse(content)
       } catch (parseError) {
         console.error("Failed to parse OpenAI response as JSON:", content)
-        // Fallback: create a basic structure
+        // Fallback: create a simple structure that matches what we store
         extractedData = {
           documentType: "Unknown PDF",
-          taxYear: new Date().getFullYear() - 1,
-          employerName: null,
-          employeeInfo: {
-            name: null,
-            ssn: null,
-            address: null
-          },
-          taxAmounts: {
-            federalWithheld: null,
-            stateWithheld: null,
-            totalIncome: null,
-            socialSecurityWages: null,
-            medicareWages: null
-          },
-          confidence: 0.3
+          content: content || "No content extracted",
+          confidence: 0.3,
+          rawText: content
         }
       }
       
@@ -268,24 +256,12 @@ export async function POST(
         extractedData = JSON.parse(content)
       } catch (parseError) {
         console.error("Failed to parse OpenAI vision response as JSON:", content)
-        // Fallback: create a basic structure
+        // Fallback: create a simple structure that matches what we store
         extractedData = {
-          documentType: "Unknown Image",
-          taxYear: new Date().getFullYear() - 1,
-          employerName: null,
-          employeeInfo: {
-            name: null,
-            ssn: null,
-            address: null
-          },
-          taxAmounts: {
-            federalWithheld: null,
-            stateWithheld: null,
-            totalIncome: null,
-            socialSecurityWages: null,
-            medicareWages: null
-          },
-          confidence: 0.3
+          documentType: "Unknown Image", 
+          content: content || "No content extracted",
+          confidence: 0.3,
+          rawText: content
         }
       }
     }
