@@ -65,7 +65,7 @@
     "@types/bcryptjs": "2.4.6",
     "@types/uuid": "^10.0.0",
     "autoprefixer": "10.4.15",
-    "pdf-parse": "1.1.1"
+    "pdf-parse": "1.1.1",
     "framer-motion": "11.3.19",
     "react-day-picker": "8.10.1",
     "react-resizable-panels": "2.0.19",
