@@ -288,7 +288,7 @@ export async function POST(
           documentType: "PDF Processing Failed",
           content: "Could not process PDF",
           confidence: 0.0,
-          error: pdfError.message,
+          error: pdfError instanceof Error ? pdfError.message : String(pdfError),
           debugInfo: "PDF text extraction failed completely"
         }
       }
