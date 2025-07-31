@@ -55,6 +55,7 @@
     "@types/uuid": "^10.0.0",
     "autoprefixer": "10.4.15",
     "react-day-picker": "8.10.1",
+    "embla-carousel-react": "8.1.8",
     "bcryptjs": "2.4.3",
     "class-variance-authority": "0.7.0",
     "clsx": "2.1.1",
