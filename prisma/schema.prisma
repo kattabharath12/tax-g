@@ -1,0 +1,279 @@
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+    output = "/home/ubuntu/tax_filing_app/app/node_modules/.prisma/client"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+// NextAuth models
+model Account {
+    id                String  @id @default(cuid())
+    userId            String
+    type              String
+    provider          String
+    providerAccountId String
+    refresh_token     String? @db.Text
+    access_token      String? @db.Text
+    expires_at        Int?
+    token_type        String?
+    scope             String?
+    id_token          String? @db.Text
+    session_state     String?
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([provider, providerAccountId])
+}
+
+model Session {
+    id           String   @id @default(cuid())
+    sessionToken String   @unique
+    userId       String
+    expires      DateTime
+    user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+    id            String    @id @default(cuid())
+    name          String?
+    email         String    @unique
+    emailVerified DateTime?
+    image         String?
+    password      String?
+    accounts      Account[]
+    sessions      Session[]
+    taxReturns    TaxReturn[]
+    createdAt     DateTime  @default(now())
+    updatedAt     DateTime  @updatedAt
+}
+
+model VerificationToken {
+    identifier String
+    token      String   @unique
+    expires    DateTime
+
+    @@unique([identifier, token])
+}
+
+// Tax Filing Models
+model TaxReturn {
+    id                String         @id @default(cuid())
+    userId            String
+    taxYear           Int
+    filingStatus      FilingStatus
+    firstName         String?
+    lastName          String?
+    ssn               String?
+    spouseFirstName   String?
+    spouseLastName    String?
+    spouseSsn         String?
+    address           String?
+    city              String?
+    state             String?
+    zipCode           String?
+    
+    // Tax calculation fields
+    totalIncome       Decimal        @default(0) @db.Decimal(12, 2)
+    adjustedGrossIncome Decimal      @default(0) @db.Decimal(12, 2)
+    standardDeduction Decimal        @default(0) @db.Decimal(12, 2)
+    itemizedDeduction Decimal        @default(0) @db.Decimal(12, 2)
+    taxableIncome     Decimal        @default(0) @db.Decimal(12, 2)
+    taxLiability      Decimal        @default(0) @db.Decimal(12, 2)
+    totalCredits      Decimal        @default(0) @db.Decimal(12, 2)
+    refundAmount      Decimal        @default(0) @db.Decimal(12, 2)
+    amountOwed        Decimal        @default(0) @db.Decimal(12, 2)
+    
+    // Status tracking
+    currentStep       Int            @default(1)
+    completedSteps    Int[]          @default([])
+    lastSavedAt       DateTime?
+    isCompleted       Boolean        @default(false)
+    isFiled           Boolean        @default(false)
+    
+    user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+    incomeEntries     IncomeEntry[]
+    deductionEntries  DeductionEntry[]
+    dependents        Dependent[]
+    documents         Document[]
+    
+    createdAt         DateTime       @default(now())
+    updatedAt         DateTime       @updatedAt
+    
+    @@unique([userId, taxYear])
+}
+
+model IncomeEntry {
+    id            String        @id @default(cuid())
+    taxReturnId   String
+    incomeType    IncomeType
+    description   String?
+    amount        Decimal       @db.Decimal(12, 2)
+    
+    // W-2 specific fields
+    employerName  String?
+    employerEIN   String?
+    
+    // 1099 specific fields
+    payerName     String?
+    payerTIN      String?
+    
+    taxReturn     TaxReturn     @relation(fields: [taxReturnId], references: [id], onDelete: Cascade)
+    extractedEntries DocumentExtractedEntry[]
+    createdAt     DateTime      @default(now())
+    updatedAt     DateTime      @updatedAt
+}
+
+model DeductionEntry {
+    id            String        @id @default(cuid())
+    taxReturnId   String
+    deductionType DeductionType
+    description   String?
+    amount        Decimal       @db.Decimal(12, 2)
+    
+    taxReturn     TaxReturn     @relation(fields: [taxReturnId], references: [id], onDelete: Cascade)
+    extractedEntries DocumentExtractedEntry[]
+    createdAt     DateTime      @default(now())
+    updatedAt     DateTime      @updatedAt
+}
+
+model Dependent {
+    id            String        @id @default(cuid())
+    taxReturnId   String
+    firstName     String
+    lastName      String
+    ssn           String?
+    relationship  String
+    birthDate     DateTime
+    
+    // Credit eligibility
+    qualifiesForCTC Boolean     @default(false)
+    qualifiesForEITC Boolean    @default(false)
+    
+    taxReturn     TaxReturn     @relation(fields: [taxReturnId], references: [id], onDelete: Cascade)
+    createdAt     DateTime      @default(now())
+    updatedAt     DateTime      @updatedAt
+}
+
+// Document storage models
+model Document {
+    id              String        @id @default(cuid())
+    taxReturnId     String
+    fileName        String
+    fileType        String
+    fileSize        Int
+    filePath        String
+    documentType    DocumentType
+    processingStatus ProcessingStatus @default(PENDING)
+    
+    // OCR and extraction results
+    ocrText         String?       @db.Text
+    extractedData   Json?
+    
+    // Verification and editing
+    isVerified      Boolean       @default(false)
+    verifiedBy      String?
+    verificationNotes String?     @db.Text
+    
+    taxReturn       TaxReturn     @relation(fields: [taxReturnId], references: [id], onDelete: Cascade)
+    extractedEntries DocumentExtractedEntry[]
+    
+    createdAt       DateTime      @default(now())
+    updatedAt       DateTime      @updatedAt
+}
+
+model DocumentExtractedEntry {
+    id          String        @id @default(cuid())
+    documentId  String
+    entryType   EntryType
+    
+    // Generic extracted data
+    extractedData Json
+    
+    // Link to actual income/deduction entries if accepted
+    incomeEntryId String?
+    deductionEntryId String?
+    
+    // Status tracking
+    isAccepted  Boolean       @default(false)
+    isEdited    Boolean       @default(false)
+    
+    document    Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+    incomeEntry IncomeEntry?  @relation(fields: [incomeEntryId], references: [id], onDelete: SetNull)
+    deductionEntry DeductionEntry? @relation(fields: [deductionEntryId], references: [id], onDelete: SetNull)
+    
+    createdAt   DateTime      @default(now())
+    updatedAt   DateTime      @updatedAt
+}
+
+// Enums
+enum FilingStatus {
+    SINGLE
+    MARRIED_FILING_JOINTLY
+    MARRIED_FILING_SEPARATELY
+    HEAD_OF_HOUSEHOLD
+    QUALIFYING_SURVIVING_SPOUSE
+}
+
+enum IncomeType {
+    W2_WAGES
+    INTEREST
+    DIVIDENDS
+    BUSINESS_INCOME
+    CAPITAL_GAINS
+    OTHER_INCOME
+    UNEMPLOYMENT
+    RETIREMENT_DISTRIBUTIONS
+    SOCIAL_SECURITY
+}
+
+enum DeductionType {
+    MORTGAGE_INTEREST
+    STATE_LOCAL_TAXES
+    CHARITABLE_CONTRIBUTIONS
+    MEDICAL_EXPENSES
+    BUSINESS_EXPENSES
+    STUDENT_LOAN_INTEREST
+    IRA_CONTRIBUTIONS
+    OTHER_DEDUCTIONS
+}
+
+enum DocumentType {
+    W2
+    W2_CORRECTED
+    W3
+    FORM_1099_INT
+    FORM_1099_DIV
+    FORM_1099_MISC
+    FORM_1099_NEC
+    FORM_1099_R
+    FORM_1099_G
+    FORM_1099_K
+    FORM_1098
+    FORM_1098_E
+    FORM_1098_T
+    FORM_5498
+    SCHEDULE_K1
+    OTHER_TAX_DOCUMENT
+    RECEIPT
+    STATEMENT
+    UNKNOWN
+}
+
+enum ProcessingStatus {
+    PENDING
+    PROCESSING
+    COMPLETED
+    FAILED
+    MANUAL_REVIEW_REQUIRED
+}
+
+enum EntryType {
+    INCOME
+    DEDUCTION
+    CREDIT
+    WITHHOLDING
+}
