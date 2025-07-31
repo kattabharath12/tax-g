@@ -1,4 +1,4 @@
-
+// app/api/documents/upload/route.ts
 import { NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
 import { prisma } from "@/lib/db"
@@ -58,8 +58,11 @@ export async function POST(request: Request) {
       }, { status: 400 })
     }
 
-    // Create upload directory if it doesn't exist
-    const uploadDir = join(process.cwd(), 'uploads', 'documents')
+    // Create upload directory - Railway uses /tmp for temporary files
+    const uploadDir = process.env.NODE_ENV === 'production' 
+      ? join('/tmp', 'uploads', 'documents')
+      : join(process.cwd(), 'uploads', 'documents')
+    
     await mkdir(uploadDir, { recursive: true })
 
     // Generate unique filename
