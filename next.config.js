@@ -1,11 +1,8 @@
-const path = require('path');
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  distDir: process.env.NEXT_DIST_DIR || '.next',
-  output: process.env.NEXT_OUTPUT_MODE,
+  output: 'standalone',
   experimental: {
-    outputFileTracingRoot: path.join(__dirname, '../'),
+    serverComponentsExternalPackages: ['@prisma/client'],
   },
   eslint: {
     ignoreDuringBuilds: true,
@@ -13,7 +10,34 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
-  images: { unoptimized: true },
-};
+  images: { 
+    unoptimized: true,
+    domains: ['your-railway-app.up.railway.app']
+  },
+  // Optimize for Railway deployment
+  compress: true,
+  poweredByHeader: false,
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'X-Frame-Options',
+            value: 'DENY',
+          },
+          {
+            key: 'X-Content-Type-Options',
+            value: 'nosniff',
+          },
+          {
+            key: 'Referrer-Policy',
+            value: 'origin-when-cross-origin',
+          },
+        ],
+      },
+    ]
+  },
+}
 
-module.exports = nextConfig;
+module.exports = nextConfig
