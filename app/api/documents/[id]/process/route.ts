@@ -112,36 +112,88 @@ export async function POST(
   }
 }
 
-// Replace Abacus.AI with OpenAI processing
+// Replace Abacus.AI with OpenAI processing - FIXED FOR PDFs
 async function processWithOpenAI(document: any): Promise<ExtractedTaxData> {
   const { readFile } = await import("fs/promises");
   
-  // Read the file and convert to base64
+  // Read the file
   const fileBuffer = await readFile(document.filePath)
-  const base64String = fileBuffer.toString('base64')
   
-  // Use OpenAI Vision API for document processing
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "user",
-        content: [
+  // Check if it's a PDF or image
+  const isPDF = document.fileType === 'application/pdf' || document.filePath.toLowerCase().endsWith('.pdf')
+  
+  let response: any;
+  
+  if (isPDF) {
+    // For PDF files, use text-based processing
+    // Convert PDF to text (you might need to install pdf-parse: npm install pdf-parse)
+    try {
+      const pdf = await import('pdf-parse');
+      const pdfData = await pdf.default(fileBuffer);
+      
+      response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
           {
-            type: "text",
-            text: getExtractionPrompt(document.documentType)
-          },
-          {
-            type: "image_url",
-            image_url: {
-              url: `data:${document.fileType};base64,${base64String}`
-            }
+            role: "user",
+            content: `${getExtractionPrompt(document.documentType)}\n\nDocument content:\n${pdfData.text}`
           }
-        ]
-      }
-    ],
-    max_tokens: 3000,
-  });
+        ],
+        max_tokens: 3000,
+      });
+    } catch (pdfError) {
+      console.log('PDF parsing failed, trying as base64:', pdfError);
+      // Fallback to base64 approach (might work for some PDFs)
+      const base64String = fileBuffer.toString('base64')
+      
+      response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: getExtractionPrompt(document.documentType)
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:application/pdf;base64,${base64String}`
+                }
+              }
+            ]
+          }
+        ],
+        max_tokens: 3000,
+      });
+    }
+  } else {
+    // For image files, use vision API
+    const base64String = fileBuffer.toString('base64')
+    
+    response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: getExtractionPrompt(document.documentType)
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:${document.fileType};base64,${base64String}`
+              }
+            }
+          ]
+        }
+      ],
+      max_tokens: 3000,
+    });
+  }
 
   const content = response.choices[0]?.message?.content;
 
@@ -149,11 +201,22 @@ async function processWithOpenAI(document: any): Promise<ExtractedTaxData> {
     throw new Error('No content returned from OpenAI API')
   }
 
-  const parsedContent = JSON.parse(content)
+  // Try to parse JSON, with fallback
+  let parsedContent;
+  try {
+    parsedContent = JSON.parse(content);
+  } catch (parseError) {
+    console.log('JSON parsing failed, using text response');
+    parsedContent = {
+      documentType: document.documentType,
+      ocrText: content,
+      extractedData: { rawText: content }
+    };
+  }
   
   return {
     documentType: parsedContent.documentType || document.documentType,
-    ocrText: parsedContent.ocrText || '',
+    ocrText: parsedContent.ocrText || content,
     extractedData: parsedContent.extractedData || parsedContent,
     confidence: 0.85 // Default confidence for OpenAI
   }
