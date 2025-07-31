@@ -66,6 +66,7 @@
     "@types/uuid": "^10.0.0",
     "autoprefixer": "10.4.15",
     "react-day-picker": "8.10.1",
+    "react-resizable-panels": "2.0.19",
     "embla-carousel-react": "8.1.8",
     "bcryptjs": "2.4.3",
     "input-otp": "1.2.4",
