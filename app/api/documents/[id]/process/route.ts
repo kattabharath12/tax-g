@@ -150,78 +150,146 @@ export async function POST(
       console.log("Processing PDF document with text extraction...")
       console.log(`PDF file size: ${uint8Array.length} bytes`)
       
-      const base64String = Buffer.from(uint8Array).toString('base64')
-      console.log(`Base64 string length: ${base64String.length}`)
+      // Try different approaches to extract text from PDF
+      let pdfText = ""
       
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are a tax document processing assistant. You will receive a PDF document and must extract the EXACT values you see in the document. 
-
-            CRITICAL INSTRUCTIONS:
-            - Extract ONLY the actual data you can read from the document
-            - Do NOT make up or hallucinate any values
-            - If you cannot clearly read a value, return null for that field
-            - Look for real employer names, real employee names, real SSNs, real dollar amounts
-            - Return data in this exact JSON format:
-            {
-              "documentType": "string",
-              "taxYear": "number or null",
-              "employerName": "exact employer name from document or null",
-              "employeeInfo": {
-                "name": "exact employee name from document or null",
-                "ssn": "exact SSN from document or null",
-                "address": "exact address from document or null"
-              },
-              "taxAmounts": {
-                "federalWithheld": "exact dollar amount or null",
-                "stateWithheld": "exact dollar amount or null",
-                "totalIncome": "exact dollar amount or null",
-                "socialSecurityWages": "exact dollar amount or null",
-                "medicareWages": "exact dollar amount or null"
-              },
-              "confidence": "number between 0 and 1",
-              "debugInfo": "describe what you actually see in the document"
-            }`
-          },
-          {
-            role: "user",
-            content: `Extract tax information from this PDF. DO NOT use placeholder data like "John Doe" or "ABC Corporation". Extract only what you can actually read from the document.
-
-            PDF Document: data:application/pdf;base64,${base64String.substring(0, 30000)}`
-          }
-        ],
-        max_tokens: 1500,
-        temperature: 0.0
-      })
-
-      const content = response.choices[0]?.message?.content
-      if (!content) {
-        throw new Error("No response from OpenAI")
-      }
-
-      console.log("Raw OpenAI response:", content)
-
       try {
-        // Clean the response - remove markdown code blocks if present
-        let cleanContent = content.trim()
-        if (cleanContent.startsWith('```json')) {
-          cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '')
-        } else if (cleanContent.startsWith('```')) {
-          cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '')
+        // First, try to extract text using a simple approach
+        // Convert PDF to text using a basic extraction method
+        const pdfData = Buffer.from(uint8Array).toString('binary')
+        
+        // Simple text extraction - look for text between stream markers
+        const textRegex = /BT\s*(.*?)\s*ET/gs
+        const matches = pdfData.match(textRegex)
+        
+        if (matches) {
+          for (const match of matches) {
+            // Extract text commands like (text) Tj or [text] TJ
+            const textCommands = match.match(/\((.*?)\)/g) || []
+            for (const cmd of textCommands) {
+              const text = cmd.replace(/[()]/g, '')
+              if (text.length > 1) {
+                pdfText += text + ' '
+              }
+            }
+          }
         }
         
-        extractedData = JSON.parse(cleanContent)
-      } catch (parseError) {
-        console.error("Failed to parse OpenAI response as JSON:", content)
-        // Fallback: create a simple structure that matches what we store
+        console.log("Extracted PDF text length:", pdfText.length)
+        console.log("Sample text:", pdfText.substring(0, 500))
+        
+        // If we got some text, use it
+        if (pdfText.length > 50) {
+          const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content: `You are a tax document processing assistant. Extract the EXACT values from the provided PDF text content.
+
+                CRITICAL INSTRUCTIONS:
+                - Extract ONLY the actual data you can read from the text
+                - Do NOT make up or hallucinate any values
+                - Look for real employer names, employee names, SSNs, dollar amounts
+                - Return data in this exact JSON format:
+                {
+                  "documentType": "string",
+                  "taxYear": "number or null",
+                  "employerName": "exact employer name from text or null",
+                  "employeeInfo": {
+                    "name": "exact employee name from text or null",
+                    "ssn": "exact SSN from text or null",
+                    "address": "exact address from text or null"
+                  },
+                  "taxAmounts": {
+                    "federalWithheld": "exact dollar amount or null",
+                    "stateWithheld": "exact dollar amount or null",
+                    "totalIncome": "exact dollar amount or null",
+                    "socialSecurityWages": "exact dollar amount or null",
+                    "medicareWages": "exact dollar amount or null"
+                  },
+                  "confidence": "number between 0 and 1",
+                  "debugInfo": "what specific text you found"
+                }`
+              },
+              {
+                role: "user",
+                content: `Extract tax information from this PDF text content. Here is the extracted text from the document:
+
+                ${pdfText.substring(0, 4000)}
+                
+                Find real names, real SSNs, real dollar amounts, and real company names from this text.`
+              }
+            ],
+            max_tokens: 1500,
+            temperature: 0.0
+          })
+
+          const content = response.choices[0]?.message?.content
+          if (!content) {
+            throw new Error("No response from OpenAI")
+          }
+
+          console.log("Raw OpenAI response:", content)
+
+          try {
+            // Clean the response - remove markdown code blocks if present
+            let cleanContent = content.trim()
+            if (cleanContent.startsWith('```json')) {
+              cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+            } else if (cleanContent.startsWith('```')) {
+              cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '')
+            }
+            
+            extractedData = JSON.parse(cleanContent)
+          } catch (parseError) {
+            console.error("Failed to parse OpenAI response as JSON:", content)
+            extractedData = {
+              documentType: "PDF",
+              content: content || "Text extracted but parsing failed",
+              confidence: 0.3,
+              rawText: pdfText.substring(0, 1000),
+              debugInfo: "Text was extracted but JSON parsing failed"
+            }
+          }
+        } else {
+          // If text extraction failed, try the base64 approach as fallback
+          console.log("Text extraction failed, trying base64 approach...")
+          const base64String = Buffer.from(uint8Array).toString('base64')
+          
+          const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: [
+              {
+                role: "system",
+                content: `Try to extract any readable information from this PDF document.`
+              },
+              {
+                role: "user", 
+                content: `Can you extract any text or data from this PDF? data:application/pdf;base64,${base64String.substring(0, 20000)}`
+              }
+            ],
+            max_tokens: 1000,
+            temperature: 0.0
+          })
+
+          const content = response.choices[0]?.message?.content || "No content extracted"
+          extractedData = {
+            documentType: "PDF",
+            content: content,
+            confidence: 0.1,
+            debugInfo: "Base64 fallback approach used - limited extraction capability"
+          }
+        }
+        
+      } catch (pdfError) {
+        console.error("PDF processing error:", pdfError)
         extractedData = {
-          documentType: "Unknown PDF",
-          content: content || "No content extracted",
-          confidence: 0.3,
-          rawText: content
+          documentType: "PDF Processing Failed",
+          content: "Could not process PDF",
+          confidence: 0.0,
+          error: pdfError.message,
+          debugInfo: "PDF text extraction failed completely"
         }
       }
       
