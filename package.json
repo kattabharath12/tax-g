@@ -58,6 +58,7 @@
     "react-day-picker": "8.10.1",
     "embla-carousel-react": "8.1.8",
     "bcryptjs": "2.4.3",
+    "vaul": "0.9.9",
     "class-variance-authority": "0.7.0",
     "clsx": "2.1.1",
     "date-fns": "3.6.0",
