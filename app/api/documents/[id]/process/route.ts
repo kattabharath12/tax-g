@@ -4,10 +4,8 @@ import { getServerSession } from "next-auth"
 import { prisma } from "@/lib/db"
 import { DocumentAIService, createDocumentAIConfig, type ExtractedTaxData } from "@/lib/document-ai-service"
 import OpenAI from 'openai'
+import { authOptions } from "@/lib/auth"
 
-export const dynamic = "force-dynamic"
-
-// Initialize OpenAI client (replace Abacus.AI)
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
@@ -17,277 +15,235 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession()
-    
-    if (!session?.user?.email) {
+    const session = await getServerSession(authOptions)
+    if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email }
-    })
-
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 })
-    }
-
     const document = await prisma.document.findFirst({
-      where: { 
+      where: {
         id: params.id,
-        taxReturn: {
-          userId: user.id
-        }
-      }
+        userId: session.user.id,
+      },
     })
 
     if (!document) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 })
     }
 
-    // Update status to processing
-    await prisma.document.update({
-      where: { id: params.id },
-      data: { processingStatus: 'PROCESSING' }
-    })
-
-    // Check if Google Document AI is configured
-    const useDocumentAI = process.env.GOOGLE_CLOUD_PROJECT_ID && 
-                          process.env.GOOGLE_CLOUD_W2_PROCESSOR_ID &&
-                          process.env.GOOGLE_APPLICATION_CREDENTIALS;
-
-    let extractedTaxData: ExtractedTaxData;
-
-    if (useDocumentAI) {
-      // Use Google Document AI
-      try {
-        const config = createDocumentAIConfig();
-        const documentAI = new DocumentAIService(config);
-        extractedTaxData = await documentAI.processDocument(document.filePath, document.documentType);
-      } catch (docAIError) {
-        console.error('Document AI processing failed, falling back to OpenAI:', docAIError);
-        // Fall back to OpenAI processing
-        extractedTaxData = await processWithOpenAI(document);
-      }
-    } else {
-      // Use OpenAI processing (replacing Abacus.AI)
-      console.log('Google Document AI not configured, using OpenAI');
-      extractedTaxData = await processWithOpenAI(document);
+    if (!document.filePath) {
+      return NextResponse.json({ error: "No file associated with document" }, { status: 400 })
     }
 
-    // Save OCR text and extracted data to database
-    await prisma.document.update({
+    // Read the file
+    const fileResponse = await fetch(document.filePath)
+    if (!fileResponse.ok) {
+      throw new Error(`Failed to fetch file: ${fileResponse.statusText}`)
+    }
+
+    const fileBuffer = await fileResponse.arrayBuffer()
+    const uint8Array = new Uint8Array(fileBuffer)
+    
+    // Determine file type from the document's metadata or file extension
+    const isPDF = document.fileName?.toLowerCase().endsWith('.pdf') || 
+                  document.filePath.toLowerCase().includes('.pdf')
+    
+    let extractedData: ExtractedTaxData
+    
+    if (isPDF) {
+      console.log("Processing PDF document with text extraction...")
+      
+      // For PDFs, use GPT-4o with text-based processing
+      // Convert to base64 for OpenAI API
+      const base64String = Buffer.from(uint8Array).toString('base64')
+      
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: `You are a tax document processing assistant. Extract key tax information from the provided document and return it as valid JSON with this exact structure:
+            {
+              "documentType": "string (e.g., 'W-2', '1099-NEC', 'Tax Return')",
+              "taxYear": "number",
+              "employerName": "string or null",
+              "employeeInfo": {
+                "name": "string or null",
+                "ssn": "string or null",
+                "address": "string or null"
+              },
+              "taxAmounts": {
+                "federalWithheld": "number or null",
+                "stateWithheld": "number or null",
+                "totalIncome": "number or null",
+                "socialSecurityWages": "number or null",
+                "medicareWages": "number or null"
+              },
+              "confidence": "number between 0 and 1"
+            }`
+          },
+          {
+            role: "user",
+            content: `Please extract tax information from this PDF document. The document is encoded in base64: data:application/pdf;base64,${base64String.substring(0, 100000)}` // Limit size for API
+          }
+        ],
+        max_tokens: 1000,
+        temperature: 0.1
+      })
+
+      const content = response.choices[0]?.message?.content
+      if (!content) {
+        throw new Error("No response from OpenAI")
+      }
+
+      try {
+        extractedData = JSON.parse(content)
+      } catch (parseError) {
+        console.error("Failed to parse OpenAI response as JSON:", content)
+        // Fallback: create a basic structure
+        extractedData = {
+          documentType: "Unknown PDF",
+          taxYear: new Date().getFullYear() - 1,
+          employerName: null,
+          employeeInfo: {
+            name: null,
+            ssn: null,
+            address: null
+          },
+          taxAmounts: {
+            federalWithheld: null,
+            stateWithheld: null,
+            totalIncome: null,
+            socialSecurityWages: null,
+            medicareWages: null
+          },
+          confidence: 0.3
+        }
+      }
+      
+    } else {
+      console.log("Processing image document with vision API...")
+      
+      // For images, use the vision API
+      const base64String = Buffer.from(uint8Array).toString('base64')
+      const mimeType = document.fileName?.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
+      
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",  
+            content: `You are a tax document processing assistant. Extract key tax information from the provided image and return it as valid JSON with this exact structure:
+            {
+              "documentType": "string (e.g., 'W-2', '1099-NEC', 'Tax Return')",
+              "taxYear": "number",
+              "employerName": "string or null",
+              "employeeInfo": {
+                "name": "string or null",
+                "ssn": "string or null", 
+                "address": "string or null"
+              },
+              "taxAmounts": {
+                "federalWithheld": "number or null",
+                "stateWithheld": "number or null",
+                "totalIncome": "number or null",
+                "socialSecurityWages": "number or null",
+                "medicareWages": "number or null"
+              },
+              "confidence": "number between 0 and 1"
+            }`
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Please extract tax information from this document image."
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:${mimeType};base64,${base64String}`
+                }
+              }
+            ]
+          }
+        ],
+        max_tokens: 1000,
+        temperature: 0.1
+      })
+
+      const content = response.choices[0]?.message?.content
+      if (!content) {
+        throw new Error("No response from OpenAI vision API")
+      }
+
+      try {
+        extractedData = JSON.parse(content)
+      } catch (parseError) {
+        console.error("Failed to parse OpenAI vision response as JSON:", content)
+        // Fallback: create a basic structure
+        extractedData = {
+          documentType: "Unknown Image",
+          taxYear: new Date().getFullYear() - 1,
+          employerName: null,
+          employeeInfo: {
+            name: null,
+            ssn: null,
+            address: null
+          },
+          taxAmounts: {
+            federalWithheld: null,
+            stateWithheld: null,
+            totalIncome: null,
+            socialSecurityWages: null,
+            medicareWages: null
+          },
+          confidence: 0.3
+        }
+      }
+    }
+
+    // Update document with processed data
+    const updatedDocument = await prisma.document.update({
       where: { id: params.id },
       data: {
-        ocrText: extractedTaxData.ocrText,
-        extractedData: {
-          documentType: extractedTaxData.documentType,
-          ocrText: extractedTaxData.ocrText,
-          extractedData: extractedTaxData.extractedData,
-          confidence: extractedTaxData.confidence
-        },
-        processingStatus: 'COMPLETED'
-      }
+        status: "PROCESSED",
+        processedData: extractedData,
+        processedAt: new Date(),
+      },
     })
 
-    // Return response
+    console.log("Document processed successfully:", extractedData)
+
     return NextResponse.json({
-      documentType: extractedTaxData.documentType,
-      ocrText: extractedTaxData.ocrText,
-      extractedData: extractedTaxData.extractedData
+      success: true,
+      document: updatedDocument,
+      extractedData,
     })
 
   } catch (error) {
     console.error("Document processing error:", error)
     
     // Update document status to failed
-    await prisma.document.update({
-      where: { id: params.id },
-      data: { processingStatus: 'FAILED' }
-    })
+    try {
+      await prisma.document.update({
+        where: { id: params.id },
+        data: {
+          status: "FAILED",
+          processedAt: new Date(),
+        },
+      })
+    } catch (dbError) {
+      console.error("Failed to update document status:", dbError)
+    }
 
     return NextResponse.json(
-      { error: "Internal server error" },
+      { 
+        error: "Document processing failed", 
+        details: error instanceof Error ? error.message : "Unknown error" 
+      },
       { status: 500 }
     )
-  }
-}
-
-// Replace Abacus.AI with OpenAI processing - FIXED FOR PDFs
-async function processWithOpenAI(document: any): Promise<ExtractedTaxData> {
-  const { readFile } = await import("fs/promises");
-  
-  // Read the file
-  const fileBuffer = await readFile(document.filePath)
-  
-  // Check if it's a PDF or image
-  const isPDF = document.fileType === 'application/pdf' || document.filePath.toLowerCase().endsWith('.pdf')
-  
-  let response: any;
-  
-  if (isPDF) {
-    // For PDF files, use text-based processing
-    // Convert PDF to text (you might need to install pdf-parse: npm install pdf-parse)
-    try {
-      const pdf = await import('pdf-parse');
-      const pdfData = await pdf.default(fileBuffer);
-      
-      response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "user",
-            content: `${getExtractionPrompt(document.documentType)}\n\nDocument content:\n${pdfData.text}`
-          }
-        ],
-        max_tokens: 3000,
-      });
-    } catch (pdfError) {
-      console.log('PDF parsing failed, trying as base64:', pdfError);
-      // Fallback to base64 approach (might work for some PDFs)
-      const base64String = fileBuffer.toString('base64')
-      
-      response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: getExtractionPrompt(document.documentType)
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:application/pdf;base64,${base64String}`
-                }
-              }
-            ]
-          }
-        ],
-        max_tokens: 3000,
-      });
-    }
-  } else {
-    // For image files, use vision API
-    const base64String = fileBuffer.toString('base64')
-    
-    response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: getExtractionPrompt(document.documentType)
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${document.fileType};base64,${base64String}`
-              }
-            }
-          ]
-        }
-      ],
-      max_tokens: 3000,
-    });
-  }
-
-  const content = response.choices[0]?.message?.content;
-
-  if (!content) {
-    throw new Error('No content returned from OpenAI API')
-  }
-
-  // Try to parse JSON, with fallback
-  let parsedContent;
-  try {
-    parsedContent = JSON.parse(content);
-  } catch (parseError) {
-    console.log('JSON parsing failed, using text response');
-    parsedContent = {
-      documentType: document.documentType,
-      ocrText: content,
-      extractedData: { rawText: content }
-    };
-  }
-  
-  return {
-    documentType: parsedContent.documentType || document.documentType,
-    ocrText: parsedContent.ocrText || content,
-    extractedData: parsedContent.extractedData || parsedContent,
-    confidence: 0.85 // Default confidence for OpenAI
-  }
-}
-
-function getExtractionPrompt(documentType: string): string {
-  const basePrompt = `Please extract all tax-related information from this document and return it in JSON format. Focus on extracting data that would be useful for tax filing purposes.
-
-Please respond in JSON format with the following structure:
-{
-  "documentType": "W2" | "FORM_1099_INT" | "FORM_1099_DIV" | "FORM_1099_MISC" | "FORM_1099_NEC" | "FORM_1099_R" | "FORM_1099_G" | "OTHER_TAX_DOCUMENT",
-  "ocrText": "Full OCR text from the document",
-  "extractedData": {
-    // Document-specific fields based on document type
-  }
-}
-
-`
-
-  switch (documentType) {
-    case 'W2':
-      return basePrompt + `For W-2 forms, extract:
-{
-  "documentType": "W2",
-  "ocrText": "Full OCR text",
-  "extractedData": {
-    "employerName": "Employer name",
-    "employerEIN": "Employer EIN (XX-XXXXXXX format)",
-    "employerAddress": "Employer address",
-    "employeeName": "Employee name",
-    "employeeSSN": "Employee SSN",
-    "employeeAddress": "Employee address",
-    "wages": "Box 1 - Wages, tips, other compensation",
-    "federalTaxWithheld": "Box 2 - Federal income tax withheld",
-    "socialSecurityWages": "Box 3 - Social security wages",
-    "socialSecurityTaxWithheld": "Box 4 - Social security tax withheld",
-    "medicareWages": "Box 5 - Medicare wages and tips",
-    "medicareTaxWithheld": "Box 6 - Medicare tax withheld"
-  }
-}`
-
-    case 'FORM_1099_INT':
-      return basePrompt + `For 1099-INT forms, extract:
-{
-  "documentType": "FORM_1099_INT",
-  "ocrText": "Full OCR text",
-  "extractedData": {
-    "payerName": "Payer name",
-    "payerTIN": "Payer TIN",
-    "recipientName": "Recipient name",
-    "recipientTIN": "Recipient TIN",
-    "interestIncome": "Box 1 - Interest income",
-    "federalTaxWithheld": "Box 4 - Federal income tax withheld"
-  }
-}`
-
-    default:
-      return basePrompt + `For other tax documents, extract relevant information including:
-{
-  "documentType": "OTHER_TAX_DOCUMENT",
-  "ocrText": "Full OCR text",
-  "extractedData": {
-    "payerName": "Payer/Employer name if applicable",
-    "payerTIN": "Payer/Employer TIN if applicable",
-    "recipientName": "Recipient/Employee name if applicable",
-    "recipientTIN": "Recipient/Employee TIN if applicable",
-    "incomeAmount": "Any income amounts",
-    "taxWithheld": "Any tax withheld amounts"
-  }
-}
-
-Respond with raw JSON only.`
   }
 }
