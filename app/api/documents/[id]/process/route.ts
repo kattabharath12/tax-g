@@ -154,7 +154,7 @@ export async function POST(
       const base64String = Buffer.from(uint8Array).toString('base64')
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-4o-mini", // Use mini version for better rate limits
         messages: [
           {
             role: "system",
@@ -186,10 +186,10 @@ export async function POST(
 
 IMPORTANT: Extract the actual values from the document, not placeholder text. Look for real numbers, names, and addresses.
 
-Document: data:application/pdf;base64,${base64String.substring(0, 200000)}` // Increased limit
+Document: data:application/pdf;base64,${base64String.substring(0, 50000)}` // Reduced to stay under token limit
           }
         ],
-        max_tokens: 2000, // Increased for better responses
+        max_tokens: 1500, // Balanced for good responses but under limit
         temperature: 0.0  // More deterministic
       })
 
@@ -227,7 +227,7 @@ Document: data:application/pdf;base64,${base64String.substring(0, 200000)}` // I
       const mimeType = document.fileName?.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-4o-mini", // Use mini version for better rate limits
         messages: [
           {
             role: "system",  
