@@ -147,182 +147,105 @@ export async function POST(
     let extractedData: any // Use flexible type for now
     
     if (isPDF) {
-      console.log("Processing PDF document with text extraction...")
+      console.log("Processing PDF document with DIRECT OpenAI analysis v3...")  // NEW LOG MESSAGE
       console.log(`PDF file size: ${uint8Array.length} bytes`)
       
-      // Try different approaches to extract text from PDF
-      let pdfText = ""
+      // Convert PDF to base64 for direct OpenAI processing
+      const base64String = Buffer.from(uint8Array).toString('base64')
+      
+      console.log("Sending FOCUSED PDF analysis to OpenAI GPT-4o v3...")  // NEW LOG MESSAGE
       
       try {
-        // Enhanced PDF text extraction
-        const pdfData = Buffer.from(uint8Array).toString('binary')
-        
-        // Method 1: Look for text between BT/ET markers
-        const textRegex = /BT\s*(.*?)\s*ET/gs
-        const matches = pdfData.match(textRegex)
-        
-        if (matches) {
-          for (const match of matches) {
-            // Extract text from various PDF text commands
-            const textCommands = match.match(/\((.*?)\)/g) || []
-            const bracketsCommands = match.match(/\[(.*?)\]/g) || []
-            
-            for (const cmd of [...textCommands, ...bracketsCommands]) {
-              const text = cmd.replace(/[()[\]]/g, '').trim()
-              if (text.length > 1 && /[a-zA-Z0-9]/.test(text)) {
-                pdfText += text + ' '
-              }
-            }
-          }
-        }
-        
-        // Method 2: Look for readable ASCII text in the PDF
-        const asciiRegex = /[A-Za-z0-9\s\-\.\,\$]{4,}/g
-        const asciiMatches = pdfData.match(asciiRegex) || []
-        
-        for (const match of asciiMatches) {
-          if (match.trim().length > 3) {
-            pdfText += match.trim() + ' '
-          }
-        }
-        
-        // Method 3: Look for specific W-2 patterns
-        const w2Patterns = [
-          /W-2/gi,
-          /Wage and Tax Statement/gi,
-          /Social Security Number/gi,
-          /Federal income tax withheld/gi,
-          /\b\d{3}-\d{2}-\d{4}\b/g, // SSN pattern
-          /\b\d{2}-\d{7}\b/g, // EIN pattern
-          /\$[\d,]+\.?\d*/g, // Dollar amounts
-          /\b[A-Z][a-z]+ [A-Z][a-z]+\b/g // Names pattern
-        ]
-        
-        for (const pattern of w2Patterns) {
-          const patternMatches = pdfData.match(pattern) || []
-          for (const match of patternMatches) {
-            pdfText += match + ' '
-          }
-        }
-        
-        // Clean up the extracted text
-        pdfText = pdfText.replace(/\s+/g, ' ').trim()
-        
-        console.log("Extracted PDF text length:", pdfText.length)
-        console.log("Sample text:", pdfText.substring(0, 500))
-        
-        // If we got some readable text, use it
-        if (pdfText.length > 20) {
-          const response = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content: `You are a tax document processing assistant. Extract the EXACT values from the provided PDF text content.
-
-                CRITICAL INSTRUCTIONS:
-                - Extract ONLY the actual data you can read from the text
-                - Do NOT make up or hallucinate any values
-                - Look for real employer names, employee names, SSNs, dollar amounts
-                - Return data in this exact JSON format:
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o",  // Use full model, not mini
+          messages: [
+            {
+              role: "user",
+              content: [
                 {
-                  "documentType": "string",
-                  "taxYear": "number or null",
-                  "employerName": "exact employer name from text or null",
-                  "employeeInfo": {
-                    "name": "exact employee name from text or null",
-                    "ssn": "exact SSN from text or null",
-                    "address": "exact address from text or null"
-                  },
-                  "taxAmounts": {
-                    "federalWithheld": "exact dollar amount or null",
-                    "stateWithheld": "exact dollar amount or null",
-                    "totalIncome": "exact dollar amount or null",
-                    "socialSecurityWages": "exact dollar amount or null",
-                    "medicareWages": "exact dollar amount or null"
-                  },
-                  "confidence": "number between 0 and 1",
-                  "debugInfo": "what specific text you found"
-                }`
-              },
-              {
-                role: "user",
-                content: `Extract tax information from this PDF text content. Here is the extracted text from the document:
+                  type: "text",
+                  text: `Analyze this W-2 or tax document PDF and extract the following information in JSON format:
 
-                ${pdfText.substring(0, 4000)}
-                
-                Find real names, real SSNs, real dollar amounts, and real company names from this text.`
-              }
-            ],
-            max_tokens: 1500,
-            temperature: 0.0
-          })
+1. Document type (W-2, 1099, etc.)
+2. Tax year
+3. Employer name
+4. Employee name, SSN, address
+5. Federal income tax withheld
+6. State income tax withheld
+7. Total wages/income
+8. Social Security wages
+9. Medicare wages
 
-          const content = response.choices[0]?.message?.content
-          if (!content) {
-            throw new Error("No response from OpenAI")
-          }
-
-          console.log("Raw OpenAI response:", content)
-
-          try {
-            // Clean the response - remove markdown code blocks if present
-            let cleanContent = content.trim()
-            if (cleanContent.startsWith('```json')) {
-              cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '')
-            } else if (cleanContent.startsWith('```')) {
-              cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '')
+Return ONLY valid JSON with this exact structure:
+{
+  "documentType": "W-2",
+  "taxYear": 2024,
+  "employerName": "Company Name",
+  "employeeInfo": {
+    "name": "John Doe",
+    "ssn": "123-45-6789",
+    "address": "123 Main St"
+  },
+  "taxAmounts": {
+    "federalWithheld": 5000.00,
+    "stateWithheld": 1500.00,
+    "totalIncome": 75000.00,
+    "socialSecurityWages": 75000.00,
+    "medicareWages": 75000.00
+  },
+  "confidence": 0.95,
+  "debugInfo": "Successfully extracted W-2 data"
+}`
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:application/pdf;base64,${base64String.slice(0, 200000)}` // Increased limit
+                  }
+                }
+              ]
             }
-            
-            extractedData = JSON.parse(cleanContent)
-          } catch (parseError) {
-            console.error("Failed to parse OpenAI response as JSON:", content)
-            extractedData = {
-              documentType: "PDF",
-              content: content || "Text extracted but parsing failed",
-              confidence: 0.3,
-              rawText: pdfText.substring(0, 1000),
-              debugInfo: "Text was extracted but JSON parsing failed"
-            }
+          ],
+          max_tokens: 1000,
+          temperature: 0.0
+        })
+
+        const content = response.choices[0]?.message?.content
+        if (!content) {
+          throw new Error("No response from OpenAI")
+        }
+
+        console.log("Raw OpenAI response:", content)
+
+        try {
+          // Clean the response - remove markdown code blocks if present
+          let cleanContent = content.trim()
+          if (cleanContent.startsWith('```json')) {
+            cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+          } else if (cleanContent.startsWith('```')) {
+            cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '')
           }
-        } else {
-          // If text extraction failed, try the base64 approach as fallback
-          console.log("Text extraction failed, trying base64 approach...")
-          const base64String = Buffer.from(uint8Array).toString('base64')
           
-          const response = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content: `Try to extract any readable information from this PDF document.`
-              },
-              {
-                role: "user", 
-                content: `Can you extract any text or data from this PDF? data:application/pdf;base64,${base64String.substring(0, 20000)}`
-              }
-            ],
-            max_tokens: 1000,
-            temperature: 0.0
-          })
-
-          const content = response.choices[0]?.message?.content || "No content extracted"
+          extractedData = JSON.parse(cleanContent)
+        } catch (parseError) {
+          console.error("Failed to parse OpenAI response as JSON:", content)
           extractedData = {
             documentType: "PDF",
-            content: content,
-            confidence: 0.1,
-            debugInfo: "Base64 fallback approach used - limited extraction capability"
+            content: content || "Direct processing failed",
+            confidence: 0.3,
+            debugInfo: "Direct PDF processing succeeded but JSON parsing failed",
+            rawResponse: content
           }
         }
         
-      } catch (pdfError) {
-        console.error("PDF processing error:", pdfError)
+      } catch (openaiError) {
+        console.error("OpenAI processing error:", openaiError)
         extractedData = {
           documentType: "PDF Processing Failed",
-          content: "Could not process PDF",
+          content: "Could not process PDF with OpenAI",
           confidence: 0.0,
-          error: pdfError instanceof Error ? pdfError.message : String(pdfError),
-          debugInfo: "PDF text extraction failed completely"
+          error: openaiError instanceof Error ? openaiError.message : String(openaiError),
+          debugInfo: "Direct OpenAI PDF processing failed completely"
         }
       }
       
@@ -334,7 +257,7 @@ export async function POST(
       const mimeType = document.fileName?.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini", // Use mini version for better rate limits
+        model: "gpt-4o", // Use full model for better accuracy
         messages: [
           {
             role: "system",  
@@ -352,7 +275,7 @@ export async function POST(
                 "federalWithheld": "number or null",
                 "stateWithheld": "number or null",
                 "totalIncome": "number or null",
-                "socialSecurityWages": "number or null",
+                "socialSecurityWages": "number or null",    
                 "medicareWages": "number or null"
               },
               "confidence": "number between 0 and 1"
