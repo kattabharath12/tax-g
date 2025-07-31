@@ -1,15 +1,15 @@
 {
   "name": "tax-filing-app",
   "private": true,
-  "scripts": {
+ "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "npx prisma db push && next start",
     "lint": "next lint",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx --require dotenv/config scripts/seed.ts"
-  },
+},
   "prisma": {
     "seed": "tsx --require dotenv/config scripts/seed.ts"
   },
