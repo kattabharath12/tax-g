@@ -149,54 +149,72 @@ export async function POST(
     if (isPDF) {
       console.log("Processing PDF document with text extraction...")
       
-      // For PDFs, use GPT-4o with text-based processing
-      // Convert to base64 for OpenAI API
-      const base64String = Buffer.from(uint8Array).toString('base64')
-      
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini", // Use mini version for better rate limits
-        messages: [
-          {
-            role: "system",
-            content: `You are a tax document processing assistant. Extract key tax information from the provided document and return it as valid JSON with this exact structure:
+      // For PDFs, try to extract text first, then send to OpenAI
+      let pdfText = ""
+      try {
+        // Try to extract text from PDF using a different approach
+        const fs = require('fs').promises
+        const tempPath = `/tmp/temp_${Date.now()}.pdf`
+        await fs.writeFile(tempPath, uint8Array)
+        
+        // Log file info for debugging
+        console.log(`PDF file size: ${uint8Array.length} bytes`)
+        console.log(`PDF saved to: ${tempPath}`)
+        
+        // For now, send the raw binary data to OpenAI with clearer instructions
+        const base64String = Buffer.from(uint8Array).toString('base64')
+        console.log(`Base64 string length: ${base64String.length}`)
+        
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
             {
-              "documentType": "string (e.g., 'W-2', '1099-NEC', 'Tax Return')",
-              "taxYear": "number",
-              "employerName": "string or null",
-              "employeeInfo": {
-                "name": "string or null",
-                "ssn": "string or null",
-                "address": "string or null"
-              },
-              "taxAmounts": {
-                "federalWithheld": "number or null",
-                "stateWithheld": "number or null", 
-                "totalIncome": "number or null",
-                "socialSecurityWages": "number or null",
-                "medicareWages": "number or null"
-              },
-              "confidence": "number between 0 and 1"
+              role: "system",
+              content: `You are a tax document processing assistant. You will receive a PDF document and must extract the EXACT values you see in the document. 
+
+              CRITICAL INSTRUCTIONS:
+              - Extract ONLY the actual data you can read from the document
+              - Do NOT make up or hallucinate any values
+              - If you cannot clearly read a value, return null for that field
+              - Look for real employer names, real employee names, real SSNs, real dollar amounts
+              - Return data in this exact JSON format:
+              {
+                "documentType": "string",
+                "taxYear": "number or null",
+                "employerName": "exact employer name from document or null",
+                "employeeInfo": {
+                  "name": "exact employee name from document or null",
+                  "ssn": "exact SSN from document or null",
+                  "address": "exact address from document or null"
+                },
+                "taxAmounts": {
+                  "federalWithheld": "exact dollar amount or null",
+                  "stateWithheld": "exact dollar amount or null",
+                  "totalIncome": "exact dollar amount or null",
+                  "socialSecurityWages": "exact dollar amount or null",
+                  "medicareWages": "exact dollar amount or null"
+                },
+                "confidence": "number between 0 and 1",
+                "debugInfo": "describe what you actually see in the document"
+              }`
+            },
+            {
+              role: "user",
+              content: `Extract tax information from this PDF. DO NOT use placeholder data like "John Doe" or "ABC Corporation". Extract only what you can actually read from the document.
+
+              PDF Document: data:application/pdf;base64,${base64String.substring(0, 30000)}`
             }
-            
-            CRITICAL: Extract ACTUAL values from the document, not placeholder text. If you see real numbers like 161130.48 or names like "Michelle Hicks", extract those exact values. Do not return null if data is clearly visible.`
-          },
-          {
-            role: "user",
-            content: `Please extract tax information from this PDF document. Here's the document content to analyze:
+          ],
+          max_tokens: 1500,
+          temperature: 0.0
+        })
 
-IMPORTANT: Extract the actual values from the document, not placeholder text. Look for real numbers, names, and addresses.
+        const content = response.choices[0]?.message?.content
+        if (!content) {
+          throw new Error("No response from OpenAI")
+        }
 
-Document: data:application/pdf;base64,${base64String.substring(0, 50000)}` // Reduced to stay under token limit
-          }
-        ],
-        max_tokens: 1500, // Balanced for good responses but under limit
-        temperature: 0.0  // More deterministic
-      })
-
-      const content = response.choices[0]?.message?.content
-      if (!content) {
-        throw new Error("No response from OpenAI")
-      }
+        console.log("Raw OpenAI response:", content)
 
       try {
         // Clean the response - remove markdown code blocks if present
