@@ -53,6 +53,21 @@ const authOptions: NextAuthOptions = {
     signIn: "/auth/login"
   },
   secret: process.env.NEXTAUTH_SECRET,
+  callbacks: {
+    session: ({ session, token }) => ({
+      ...session,
+      user: {
+        ...session.user,
+        id: token.sub,
+      },
+    }),
+    jwt: ({ user, token }) => {
+      if (user) {
+        token.uid = user.id;
+      }
+      return token;
+    },
+  },
 }
 
 const openai = new OpenAI({
@@ -69,10 +84,13 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    // Type assertion to ensure we have the id
+    const userId = session.user.id as string
+
     const document = await prisma.document.findFirst({
       where: {
         id: params.id,
-        userId: session.user.id,
+        userId: userId,
       },
     })
 
