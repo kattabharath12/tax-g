@@ -98,12 +98,23 @@ export async function POST(
     const document = await prisma.document.findFirst({
       where: {
         id: params.id,
-        userId: userId,
       },
+      include: {
+        taxReturn: {
+          include: {
+            user: true
+          }
+        }
+      }
     })
 
     if (!document) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 })
+    }
+
+    // Check if the document belongs to the authenticated user
+    if (document.taxReturn.user.id !== userId) {
+      return NextResponse.json({ error: "Unauthorized access to document" }, { status: 403 })
     }
 
     if (!document.filePath) {
@@ -283,9 +294,9 @@ export async function POST(
     const updatedDocument = await prisma.document.update({
       where: { id: params.id },
       data: {
-        status: "PROCESSED",
-        processedData: extractedData,
-        processedAt: new Date(),
+        processingStatus: "COMPLETED",
+        extractedData: extractedData,
+        updatedAt: new Date(),
       },
     })
 
@@ -305,8 +316,8 @@ export async function POST(
       await prisma.document.update({
         where: { id: params.id },
         data: {
-          status: "FAILED",
-          processedAt: new Date(),
+          processingStatus: "FAILED",
+          updatedAt: new Date(),
         },
       })
     } catch (dbError) {
