@@ -193,7 +193,15 @@ export async function POST(
       }
 
       try {
-        extractedData = JSON.parse(content)
+        // Clean the response - remove markdown code blocks if present
+        let cleanContent = content.trim()
+        if (cleanContent.startsWith('```json')) {
+          cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+        } else if (cleanContent.startsWith('```')) {
+          cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '')
+        }
+        
+        extractedData = JSON.parse(cleanContent)
       } catch (parseError) {
         console.error("Failed to parse OpenAI response as JSON:", content)
         // Fallback: create a simple structure that matches what we store
@@ -263,7 +271,15 @@ export async function POST(
       }
 
       try {
-        extractedData = JSON.parse(content)
+        // Clean the response - remove markdown code blocks if present
+        let cleanContent = content.trim()
+        if (cleanContent.startsWith('```json')) {
+          cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+        } else if (cleanContent.startsWith('```')) {
+          cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '')
+        }
+        
+        extractedData = JSON.parse(cleanContent)
       } catch (parseError) {
         console.error("Failed to parse OpenAI vision response as JSON:", content)
         // Fallback: create a simple structure that matches what we store
