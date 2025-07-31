@@ -156,56 +156,86 @@ export async function POST(
       console.log("Sending FOCUSED PDF analysis to OpenAI GPT-4o v3...")  // NEW LOG MESSAGE
       
       try {
-        // Use OpenAI's assistants API with file upload for PDF processing
-        console.log("Uploading PDF to OpenAI for analysis...")
+        // Extract text content from PDF using multiple methods
+        console.log("Extracting text from PDF...")
         
-        // Create a temporary file for OpenAI
-        const pdfBlob = new Blob([uint8Array], { type: 'application/pdf' })
+        const pdfBuffer = Buffer.from(uint8Array)
+        let extractedText = ""
         
-        // Use the simpler chat completion with text analysis approach
+        // Method 1: Look for readable text in PDF streams
+        const pdfString = pdfBuffer.toString('binary')
+        
+        // Extract text between parentheses (common PDF text encoding)
+        const textMatches = pdfString.match(/\(([^)]+)\)/g) || []
+        for (const match of textMatches) {
+          const text = match.replace(/[()]/g, '').trim()
+          if (text.length > 1 && /[a-zA-Z0-9]/.test(text)) {
+            extractedText += text + ' '
+          }
+        }
+        
+        // Method 2: Look for specific patterns
+        const patterns = [
+          /W-2/gi,
+          /\b\d{4}\b/g, // Years
+          /\$[\d,]+\.?\d*/g, // Dollar amounts
+          /\b\d{3}-\d{2}-\d{4}\b/g, // SSN
+          /\b\d{2}-\d{7}\b/g, // EIN
+          /[A-Z][a-z]+ [A-Z][a-z]+/g, // Names
+          /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Inc|LLC|Corp|Company)\b/g // Company names
+        ]
+        
+        for (const pattern of patterns) {
+          const matches = pdfString.match(pattern) || []
+          for (const match of matches) {
+            extractedText += match + ' '
+          }
+        }
+        
+        console.log("Extracted text length:", extractedText.length)
+        console.log("Sample extracted text:", extractedText.substring(0, 500))
+        
+        if (extractedText.length < 10) {
+          extractedText = "No readable text found in PDF"
+        }
+        
         const response = await openai.chat.completions.create({
           model: "gpt-4o",
           messages: [
             {
               role: "system",
-              content: `You are a tax document processing assistant. I will provide you with the raw binary content of a PDF file. Try to extract any readable text and identify tax document information.
+              content: `You are a tax document analyzer. Extract REAL tax information from the provided text. 
 
-Extract tax information and return ONLY valid JSON with this structure:
+CRITICAL: Do NOT return template data. Only return actual values found in the text, or null if not found.
+
+Return JSON in this format:
 {
-  "documentType": "W-2",
-  "taxYear": 2024,
-  "employerName": "Company Name",
+  "documentType": "actual document type found or null",
+  "taxYear": actual_year_number_or_null,
+  "employerName": "actual employer name found or null",
   "employeeInfo": {
-    "name": "John Doe", 
-    "ssn": "123-45-6789",
-    "address": "123 Main St"
+    "name": "actual person name found or null",
+    "ssn": "actual SSN found or null",
+    "address": "actual address found or null"
   },
   "taxAmounts": {
-    "federalWithheld": 5000.00,
-    "stateWithheld": 1500.00,
-    "totalIncome": 75000.00,
-    "socialSecurityWages": 75000.00,
-    "medicareWages": 75000.00
+    "federalWithheld": actual_number_or_null,
+    "stateWithheld": actual_number_or_null,
+    "totalIncome": actual_number_or_null,
+    "socialSecurityWages": actual_number_or_null,
+    "medicareWages": actual_number_or_null
   },
-  "confidence": 0.95,
-  "debugInfo": "Analysis method used"
+  "confidence": confidence_score_0_to_1,
+  "debugInfo": "what specific text you found"
 }`
             },
             {
               role: "user",
-              content: `Please analyze this PDF content for tax document information. Here is the raw PDF data (first 2000 characters as text):
+              content: `Extract tax information from this text extracted from a PDF document:
 
-${Buffer.from(uint8Array.slice(0, 2000)).toString('utf8', 0, 2000).replace(/[^\x20-\x7E]/g, ' ')}
+${extractedText}
 
-Look for patterns like:
-- W-2, 1099, tax forms
-- Dollar amounts ($X,XXX.XX)
-- SSN patterns (XXX-XX-XXXX)
-- Names and addresses
-- Tax year (2023, 2024, etc.)
-- Employer information
-
-Extract any readable tax information you can identify.`
+Find the ACTUAL values in this text. If you cannot find specific information, return null for that field. Do not make up or use template data.`
             }
           ],
           max_tokens: 1000,
