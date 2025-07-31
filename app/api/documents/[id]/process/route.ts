@@ -170,21 +170,27 @@ export async function POST(
               },
               "taxAmounts": {
                 "federalWithheld": "number or null",
-                "stateWithheld": "number or null",
+                "stateWithheld": "number or null", 
                 "totalIncome": "number or null",
                 "socialSecurityWages": "number or null",
                 "medicareWages": "number or null"
               },
               "confidence": "number between 0 and 1"
-            }`
+            }
+            
+            CRITICAL: Extract ACTUAL values from the document, not placeholder text. If you see real numbers like 161130.48 or names like "Michelle Hicks", extract those exact values. Do not return null if data is clearly visible.`
           },
           {
             role: "user",
-            content: `Please extract tax information from this PDF document. The document is encoded in base64: data:application/pdf;base64,${base64String.substring(0, 100000)}` // Limit size for API
+            content: `Please extract tax information from this PDF document. Here's the document content to analyze:
+
+IMPORTANT: Extract the actual values from the document, not placeholder text. Look for real numbers, names, and addresses.
+
+Document: data:application/pdf;base64,${base64String.substring(0, 200000)}` // Increased limit
           }
         ],
-        max_tokens: 1000,
-        temperature: 0.1
+        max_tokens: 2000, // Increased for better responses
+        temperature: 0.0  // More deterministic
       })
 
       const content = response.choices[0]?.message?.content
