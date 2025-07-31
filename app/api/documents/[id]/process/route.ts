@@ -154,32 +154,65 @@ export async function POST(
       let pdfText = ""
       
       try {
-        // First, try to extract text using a simple approach
-        // Convert PDF to text using a basic extraction method
+        // Enhanced PDF text extraction
         const pdfData = Buffer.from(uint8Array).toString('binary')
         
-        // Simple text extraction - look for text between stream markers
+        // Method 1: Look for text between BT/ET markers
         const textRegex = /BT\s*(.*?)\s*ET/gs
         const matches = pdfData.match(textRegex)
         
         if (matches) {
           for (const match of matches) {
-            // Extract text commands like (text) Tj or [text] TJ
+            // Extract text from various PDF text commands
             const textCommands = match.match(/\((.*?)\)/g) || []
-            for (const cmd of textCommands) {
-              const text = cmd.replace(/[()]/g, '')
-              if (text.length > 1) {
+            const bracketsCommands = match.match(/\[(.*?)\]/g) || []
+            
+            for (const cmd of [...textCommands, ...bracketsCommands]) {
+              const text = cmd.replace(/[()[\]]/g, '').trim()
+              if (text.length > 1 && /[a-zA-Z0-9]/.test(text)) {
                 pdfText += text + ' '
               }
             }
           }
         }
         
+        // Method 2: Look for readable ASCII text in the PDF
+        const asciiRegex = /[A-Za-z0-9\s\-\.\,\$]{4,}/g
+        const asciiMatches = pdfData.match(asciiRegex) || []
+        
+        for (const match of asciiMatches) {
+          if (match.trim().length > 3) {
+            pdfText += match.trim() + ' '
+          }
+        }
+        
+        // Method 3: Look for specific W-2 patterns
+        const w2Patterns = [
+          /W-2/gi,
+          /Wage and Tax Statement/gi,
+          /Social Security Number/gi,
+          /Federal income tax withheld/gi,
+          /\b\d{3}-\d{2}-\d{4}\b/g, // SSN pattern
+          /\b\d{2}-\d{7}\b/g, // EIN pattern
+          /\$[\d,]+\.?\d*/g, // Dollar amounts
+          /\b[A-Z][a-z]+ [A-Z][a-z]+\b/g // Names pattern
+        ]
+        
+        for (const pattern of w2Patterns) {
+          const patternMatches = pdfData.match(pattern) || []
+          for (const match of patternMatches) {
+            pdfText += match + ' '
+          }
+        }
+        
+        // Clean up the extracted text
+        pdfText = pdfText.replace(/\s+/g, ' ').trim()
+        
         console.log("Extracted PDF text length:", pdfText.length)
         console.log("Sample text:", pdfText.substring(0, 500))
         
-        // If we got some text, use it
-        if (pdfText.length > 50) {
+        // If we got some readable text, use it
+        if (pdfText.length > 20) {
           const response = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
