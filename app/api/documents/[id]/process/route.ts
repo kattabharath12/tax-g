@@ -121,13 +121,23 @@ export async function POST(
       return NextResponse.json({ error: "No file associated with document" }, { status: 400 })
     }
 
-    // Read the file
-    const fileResponse = await fetch(document.filePath)
-    if (!fileResponse.ok) {
-      throw new Error(`Failed to fetch file: ${fileResponse.statusText}`)
+    // Read the file - handle both URLs and local paths
+    let fileBuffer: ArrayBuffer
+    
+    if (document.filePath.startsWith('http://') || document.filePath.startsWith('https://')) {
+      // If it's a URL, fetch it
+      const fileResponse = await fetch(document.filePath)
+      if (!fileResponse.ok) {
+        throw new Error(`Failed to fetch file: ${fileResponse.statusText}`)
+      }
+      fileBuffer = await fileResponse.arrayBuffer()
+    } else {
+      // If it's a local path, read from filesystem
+      const fs = require('fs').promises
+      const fileData = await fs.readFile(document.filePath)
+      fileBuffer = fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength)
     }
-
-    const fileBuffer = await fileResponse.arrayBuffer()
+    
     const uint8Array = new Uint8Array(fileBuffer)
     
     // Determine file type from the document's metadata or file extension
