@@ -216,6 +216,47 @@ export async function POST(
 
         console.log("Raw OpenAI response:", content)
 
+        try {
+          // Clean the response - remove markdown code blocks if present
+          let cleanContent = content.trim()
+          if (cleanContent.startsWith('```json')) {
+            cleanContent = cleanContent.replace(/^```json\s*/, '').replace(/\s*```$/, '')
+          } else if (cleanContent.startsWith('```')) {
+            cleanContent = cleanContent.replace(/^```\s*/, '').replace(/\s*```$/, '')
+          }
+          
+          extractedData = JSON.parse(cleanContent)
+        } catch (parseError) {
+          console.error("Failed to parse OpenAI response as JSON:", content)
+          // Fallback: create a simple structure that matches what we store
+          extractedData = {
+            documentType: "Unknown PDF",
+            content: content || "No content extracted",
+            confidence: 0.3,
+            rawText: content
+          }
+        }
+        
+        // Clean up temp file
+        try {
+          await fs.unlink(tempPath)
+        } catch (cleanupError) {
+          console.log("Could not clean up temp file:", cleanupError.message)
+        }
+        
+      } catch (pdfError) {
+        console.error("PDF processing error:", pdfError)
+        // Fallback to simple extraction
+        extractedData = {
+          documentType: "PDF Processing Failed",
+          content: "Could not process PDF",
+          confidence: 0.1,
+          error: pdfError.message
+        }
+      }
+      
+    } else {
+
       try {
         // Clean the response - remove markdown code blocks if present
         let cleanContent = content.trim()
